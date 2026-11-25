@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package kvstore;
+
+option java_multiple_files = true;
+option java_package = "com.kvstore.proto";
+
+// ---------- Client-facing API ----------
+
+service KeyValue {
+  rpc Get (GetRequest) returns (GetResponse);
+  rpc Put (PutRequest) returns (WriteResponse);
+  rpc Delete (DeleteRequest) returns (WriteResponse);
+  rpc ClusterInfo (Empty) returns (ClusterInfoResponse);
+}
+
+message Empty {}
+
+message GetRequest { string key = 1; }
+
+message GetResponse {
+  bool found = 1;
+  string value = 2;
+  int64 version = 3;
+  int32 served_by = 4;
+}
+
+message PutRequest {
+  string key = 1;
+  string value = 2;
+}
+
+message DeleteRequest { string key = 1; }
+
+message WriteResponse {
+  bool success = 1;
+  int64 index = 2;        // log index the write was committed at
+  int32 leader_id = 3;    // current leader (useful for client redirection)
+  string error = 4;
+}
+
+message ClusterInfoResponse {
+  int32 node_id = 1;
+  int32 leader_id = 2;
+  int64 term = 3;
+  int64 commit_index = 4;
+  int32 key_count = 5;
+  repeated string peers = 6;
+}
+
+// ---------- Internal node-to-node API ----------
+
+service Replication {
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Replicate (ReplicateRequest) returns (ReplicateResponse);
+  rpc RequestVote (VoteRequest) returns (VoteResponse);
+  rpc Snapshot (Empty) returns (SnapshotResponse);
+}
+
+enum OpType {
+  PUT = 0;
+  DELETE = 1;
+}
+
+message LogEntry {
+  int64 index = 1;
+  int64 term = 2;
+  OpType op = 3;
+  string key = 4;
+  string value = 5;
+}
+
+message HeartbeatRequest {
+  int32 leader_id = 1;
+  int64 term = 2;
+  int64 commit_index = 3;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  int64 term = 2;
+  int64 last_index = 3;
+}
+
+message ReplicateRequest {
+  int32 leader_id = 1;
+  int64 term = 2;
+  LogEntry entry = 3;
+}
+
+message ReplicateResponse {
+  bool ok = 1;
+  int64 term = 2;
+  int64 last_index = 3;
+}
+
+message VoteRequest {
+  int32 candidate_id = 1;
+  int64 term = 2;
+  int64 last_index = 3;
+}
+
+message VoteResponse {
+  bool granted = 1;
+  int64 term = 2;
+}
+
+message SnapshotResponse {
+  int64 last_index = 1;
+  int64 term = 2;
+  repeated LogEntry entries = 3;   // current state as PUT entries
+}
