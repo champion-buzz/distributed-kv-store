@@ -60,6 +60,7 @@ public class Node {
     private volatile long indexAtLastHeartbeat = -1;
 
     private final Object stateLock = new Object();
+    private final Object replicationOrder = new Object();
     private final ScheduledExecutorService timers = Executors.newScheduledThreadPool(2);
     private final ExecutorService rpcPool = Executors.newCachedThreadPool();
     private Server server;
@@ -227,27 +228,32 @@ public class Node {
 
     private WriteResponse write(OpType op, String key, String value) {
 
-        LogEntry entry = store.appendAsLeader(term, op, key, value);
-        ReplicateRequest req = ReplicateRequest.newBuilder()
-                .setLeaderId(id).setTerm(term).setEntry(entry).build();
-
         // Fan out in parallel; per-peer single-thread queues keep entries in order.
+        // Index assignment and enqueueing happen under one lock so every follower
+        // receives entries in exactly index order (otherwise concurrent writers could
+        // enqueue N+1 before N, the follower would see a gap and fall back to a snapshot).
         AtomicInteger acks = new AtomicInteger(1); // self
         CountDownLatch quorum = new CountDownLatch(majority() - 1);
-        for (Integer pid : peerAddrs.keySet()) {
-            peerQueues.get(pid).submit(() -> {
-                try {
-                    ReplicateResponse r = repl(pid, REPLICATION_TIMEOUT_MS).replicate(req);
-                    if (r.getOk()) {
-                        acks.incrementAndGet();
-                        quorum.countDown();
-                    } else if (r.getTerm() > term) {
-                        stepDown(r.getTerm(), -1);
+        LogEntry entry;
+        synchronized (replicationOrder) {
+            entry = store.appendAsLeader(term, op, key, value);
+            ReplicateRequest req = ReplicateRequest.newBuilder()
+                    .setLeaderId(id).setTerm(term).setEntry(entry).build();
+            for (Integer pid : peerAddrs.keySet()) {
+                peerQueues.get(pid).submit(() -> {
+                    try {
+                        ReplicateResponse r = repl(pid, REPLICATION_TIMEOUT_MS).replicate(req);
+                        if (r.getOk()) {
+                            acks.incrementAndGet();
+                            quorum.countDown();
+                        } else if (r.getTerm() > term) {
+                            stepDown(r.getTerm(), -1);
+                        }
+                    } catch (Exception ignored) {
+                        // unreachable peer; it will sync from a snapshot later
                     }
-                } catch (Exception ignored) {
-                    // unreachable peer; it will sync from a snapshot later
-                }
-            });
+                });
+            }
         }
         boolean committed;
         try {
@@ -299,7 +305,7 @@ public class Node {
             try {
                 SnapshotResponse snap = repl(lid, 5000).snapshot(Empty.getDefaultInstance());
                 store.installSnapshot(snap.getEntriesList(), snap.getLastIndex(), snap.getTerm());
-                LOG.info(() -> "node " + id + " installed snapshot up to index " + snap.getLastIndex());
+                LOG.fine(() -> "node " + id + " installed snapshot up to index " + snap.getLastIndex());
             } catch (Exception e) {
                 LOG.warning("node " + id + " snapshot sync failed: " + e.getMessage());
             } finally {
