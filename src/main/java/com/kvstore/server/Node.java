@@ -64,6 +64,7 @@ public class Node {
     private final ScheduledExecutorService timers = Executors.newScheduledThreadPool(2);
     private final ExecutorService rpcPool = Executors.newCachedThreadPool();
     private Server server;
+    private final ExecutorService serverPool;
     private volatile long electionTimeout = randomTimeout();
 
     public Node(int id, int port, Map<Integer, String> peers, Path dataDir, int workerThreads) throws IOException {
@@ -72,6 +73,7 @@ public class Node {
         this.peerAddrs = new TreeMap<>(peers);
         this.store = new KVStore(dataDir, id);
         this.workerThreads = workerThreads;
+        this.serverPool = Executors.newFixedThreadPool(workerThreads);
         for (Integer pid : peerAddrs.keySet()) {
             peerQueues.put(pid, Executors.newSingleThreadExecutor());
         }
@@ -83,7 +85,7 @@ public class Node {
         // A bounded worker pool models a node's finite capacity; it is what makes
         // spreading load across replicas matter.
         server = ServerBuilder.forPort(port)
-                .executor(Executors.newFixedThreadPool(workerThreads))
+                .executor(serverPool)
                 .addService(new KeyValueService())
                 .addService(new ReplicationService())
                 .build()
@@ -98,6 +100,7 @@ public class Node {
         rpcPool.shutdownNow();
         peerQueues.values().forEach(ExecutorService::shutdownNow);
         if (server != null) server.shutdownNow();
+        serverPool.shutdownNow();
         channels.values().forEach(ManagedChannel::shutdownNow);
         store.close();
     }

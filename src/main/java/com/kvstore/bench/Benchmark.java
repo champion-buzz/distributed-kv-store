@@ -50,6 +50,7 @@ public class Benchmark {
                 System.out.printf("%-18s %10.2f %10.2f %10.2f %12.0f%s%n", s, r.p50, r.p99, r.mean, r.throughput, delta);
             }
         }
+        System.exit(0);
     }
 
     record Result(double p50, double p99, double mean, double throughput) {}

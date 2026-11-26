@@ -99,7 +99,16 @@ Every routing strategy gets the same workload, and the output shows p50/p99/mean
 `readCostMicros` simulates the storage cost of a disk-backed node; each node has a fixed number of worker threads.
 Under this load, sending every request to one node makes requests queue up. Spreading reads across replicas uses all three nodes' capacity.
 
-CI runs the benchmark on every push. You can find the latest numbers in the **Actions → CI → Summary** tab.
+**Results** from a GitHub Actions run (ubuntu-latest, 3 nodes in one JVM, 64 client threads × 300 ops, 4 workers per node, `readCostMicros=500`):
+
+| Read routing | p50 | p99 | Mean | Throughput |
+|---|---:|---:|---:|---:|
+| `SINGLE_NODE` (baseline) | 9.57 ms | 14.21 ms | 9.84 ms | 6,466 ops/s |
+| `ROUND_ROBIN` | 1.37 ms | 11.06 ms | 3.82 ms (**−61%**) | 15,964 ops/s (2.5×) |
+| `LEAST_OUTSTANDING` | 1.39 ms | 19.30 ms | 3.92 ms (**−60%**) | 15,567 ops/s |
+
+Spreading reads across replicas cut mean latency by about 60% and raised throughput 2.5× under this load.
+CI re-runs the benchmark on every push, and the numbers will vary with the runner.
 
 ## Design notes and simplifications
 
